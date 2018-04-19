@@ -1,39 +1,46 @@
 package baseMySQL
 
 import (
-	"sync"
-	"github.com/sirupsen/logrus"
-	"github.com/jmoiron/sqlx"
-	"fmt"
-	"time"
-	"github.com/pkg/errors"
 	"context"
-	"crypto/x509"
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"sync"
+	"time"
+
 	"github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // Config is used to pass connection settings to NewDatabase
 type Config struct {
 	Secret, Username, Host, Database string
+	NoTLS                            bool
 }
 
 // New will return new mysql connection and will start ping goroutine to monitor connection state
 // On ctx.Done() db object will be automatically closed
 func New(ctx context.Context, wg *sync.WaitGroup, logger logrus.FieldLogger, dbCfg *Config) (*sqlx.DB, error) {
-	rootCertPool := x509.NewCertPool()
-	if ok := rootCertPool.AppendCertsFromPEM([]byte(msRootCert)); !ok {
-		return nil, errors.New("failed to create new certificate pool")
-	}
+	tlsCfgName := tlsConfigNameLocal
+	if !dbCfg.NoTLS {
+		tlsCfgName = tlsConfigName
 
-	err := mysql.RegisterTLSConfig(tlsConfigName, &tls.Config{RootCAs: rootCertPool})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to register TLS config")
+		rootCertPool := x509.NewCertPool()
+		if ok := rootCertPool.AppendCertsFromPEM([]byte(msRootCert)); !ok {
+			return nil, errors.New("failed to create new certificate pool")
+		}
+
+		err := mysql.RegisterTLSConfig(tlsCfgName, &tls.Config{RootCAs: rootCertPool})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to register TLS config")
+		}
 	}
 
 	db, err := sqlx.ConnectContext(ctx, "mysql", fmt.Sprintf(
 		"%s:%s@tcp(%s)/%s?parseTime=true&tls=%s&allowNativePasswords=true",
-		dbCfg.Username, dbCfg.Secret, dbCfg.Host, dbCfg.Database, tlsConfigName,
+		dbCfg.Username, dbCfg.Secret, dbCfg.Host, dbCfg.Database, tlsCfgName,
 	))
 
 	if err != nil {
@@ -74,8 +81,9 @@ func pingAndClose(ctx context.Context, wg *sync.WaitGroup, logger logrus.FieldLo
 }
 
 const (
-	tlsConfigName = "custom"
-	msRootCert = `-----BEGIN CERTIFICATE-----
+	tlsConfigName      = "custom"
+	tlsConfigNameLocal = "false"
+	msRootCert         = `-----BEGIN CERTIFICATE-----
 MIIDdzCCAl+gAwIBAgIEAgAAuTANBgkqhkiG9w0BAQUFADBaMQswCQYDVQQGEwJJ
 RTESMBAGA1UEChMJQmFsdGltb3JlMRMwEQYDVQQLEwpDeWJlclRydXN0MSIwIAYD
 VQQDExlCYWx0aW1vcmUgQ3liZXJUcnVzdCBSb290MB4XDTAwMDUxMjE4NDYwMFoX
